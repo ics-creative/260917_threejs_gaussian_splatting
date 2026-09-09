@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Summon a 3D Gaussian Splat</title>
+<link rel="icon" href="data:,">
+<style>
+  body { margin: 0; overflow: hidden; background: #06070c; font-family: system-ui, sans-serif; }
+  #ui { position: fixed; left: 0; right: 0; bottom: 28px; display: flex; justify-content: center; pointer-events: none; }
+  #summon {
+    pointer-events: auto; cursor: pointer; border: 1px solid rgba(160, 140, 255, 0.6); border-radius: 999px;
+    padding: 12px 44px; font-size: 17px; letter-spacing: 0.28em; text-transform: uppercase; color: #e8e4ff;
+    background: rgba(40, 30, 90, 0.55); backdrop-filter: blur(6px); transition: transform 0.1s, background 0.2s;
+  }
+  #summon:hover { background: rgba(80, 60, 160, 0.7); }
+  #summon:active { transform: scale(0.96); }
+  #ui { gap: 14px; align-items: center; }
+  .sub {
+    pointer-events: auto; cursor: pointer; border: 1px solid rgba(160, 140, 255, 0.35); border-radius: 999px;
+    padding: 8px 18px; font-size: 12px; letter-spacing: 0.12em; color: #b8b0e8; background: rgba(30, 24, 60, 0.5);
+  }
+  .sub:hover { background: rgba(60, 48, 120, 0.6); }
+  #drop {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none;
+    font-size: 22px; letter-spacing: 0.2em; color: #e8e4ff; background: rgba(40, 30, 90, 0.45);
+    border: 2px dashed rgba(180, 160, 255, 0.7); box-sizing: border-box;
+  }
+  #drop.on { display: flex; }
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="ui">
+  <button id="load" class="sub">Load .spz</button>
+  <button id="summon">Summon</button>
+  <button id="flip" class="sub">Flip</button>
+</div>
+<input id="file" type="file" accept=".spz" hidden>
+<div id="drop">Drop a .spz file to summon it</div>
+<script type="module">
+import * as THREE from "three/webgpu";
+import { pass, uniform, varying, vec3, vec4, float, smoothstep, instanceIndex, mix, hash, modelWorldMatrix } from "three/tsl";
+import { bloom } from "three/addons/tsl/display/BloomNode.js";
+import { SPZLoader } from "three/addons/loaders/SPZLoader.js";
+import { GaussianSplat } from "three/addons/objects/GaussianSplat.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
+
+const params = new URLSearchParams(location.search);
+// 英語版と共通にするため既定は英語。?lang=ja で日本語表記にする
+if (params.get("lang") === "ja") {
+  document.documentElement.lang = "ja";
+  document.getElementById("summon").textContent = "召喚";
+} else {
+  document.documentElement.lang = "en";
+}
+const MAGIC = new THREE.Color(0x8f7cff);
+const MAGIC_HOT = new THREE.Color(0xcfe6ff);
+
+// MSAA は数十万粒の近接描画で大きく fps が落ちる（ブレンド帯域が4倍になる）ため無効
+const renderer = new THREE.WebGPURenderer({ antialias: false });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+document.body.prepend(renderer.domElement);
+await renderer.init();
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06070c);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.05, 100);
+camera.position.set(0, 2.0, 2.9);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.55, 0);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.7;
+controls.minDistance = 1.2;
+controls.maxDistance = 8;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.update();
+
+// ===== 床と照明 =====
+scene.add(new THREE.HemisphereLight(0x2a2c48, 0x08080c, 0.5));
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(8, 64),
+  new THREE.MeshStandardMaterial({ color: 0x0d0e15, roughness: 0.5, metalness: 0.15 })
+);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+// 魔法陣の光が床に落ちる分。強さはアニメーションで動かす
+const glowLight = new THREE.PointLight(MAGIC, 0, 5, 1.5);
+glowLight.position.set(0, 0.5, 0);
+scene.add(glowLight);
+
+// ===== 魔法陣 =====
+function seeded(seed) {
+  return () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+}
+function circleLayer(kind, size = 1024) {
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  const cx = size / 2;
+  const R = size / 2;
+  const rand = seeded(kind === "outer" ? 7 : 13);
+  ctx.strokeStyle = "#fff";
+  ctx.fillStyle = "#fff";
+  ctx.lineCap = "round";
+  const ring = (r, w) => { ctx.lineWidth = w; ctx.beginPath(); ctx.arc(cx, cx, r * R, 0, Math.PI * 2); ctx.stroke(); };
+  if (kind === "outer") {
+    ring(0.985, 3); ring(0.96, 7); ring(0.91, 2);
+    ring(0.80, 2); ring(0.77, 5);
+    // 最外周に等間隔の小さな菱形
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      ctx.save();
+      ctx.translate(cx + Math.cos(a) * 0.935 * R, cx + Math.sin(a) * 0.935 * R);
+      ctx.rotate(a);
+      ctx.beginPath();
+      ctx.moveTo(-9, 0); ctx.lineTo(0, -5); ctx.lineTo(9, 0); ctx.lineTo(0, 5); ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    // 外周の目盛り
+    for (let i = 0; i < 96; i++) {
+      const a = (i / 96) * Math.PI * 2;
+      const long = i % 8 === 0;
+      ctx.lineWidth = long ? 3 : 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 0.91 * R, cx + Math.sin(a) * 0.91 * R);
+      ctx.lineTo(cx + Math.cos(a) * (long ? 0.86 : 0.885) * R, cx + Math.sin(a) * (long ? 0.86 : 0.885) * R);
+      ctx.stroke();
+    }
+    // 文字帯: 短い画の組み合わせでルーン風の記号を並べる
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * Math.PI * 2;
+      const r = 0.845 * R;
+      ctx.save();
+      ctx.translate(cx + Math.cos(a) * r, cx + Math.sin(a) * r);
+      ctx.rotate(a + Math.PI / 2);
+      ctx.lineWidth = 2.2;
+      const strokes = 2 + Math.floor(rand() * 3);
+      for (let s = 0; s < strokes; s++) {
+        ctx.beginPath();
+        ctx.moveTo((rand() - 0.5) * 14, (rand() - 0.5) * 22);
+        ctx.lineTo((rand() - 0.5) * 14, (rand() - 0.5) * 22);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  } else if (kind === "mid") {
+    ring(0.745, 2); ring(0.705, 1.5);
+    // 2つの正方形を45度ずらして重ねた八芒の格子
+    for (let t = 0; t < 2; t++) {
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const a = (k / 4) * Math.PI * 2 + (t ? Math.PI / 4 : 0);
+        const x = cx + Math.cos(a) * 0.705 * R, y = cx + Math.sin(a) * 0.705 * R;
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    // 12個の小円と、その間をつなぐ弧の鎖
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * 0.725 * R, cx + Math.sin(a) * 0.725 * R, 0.022 * R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(cx, cx, 0.68 * R, a + 0.08, a + Math.PI / 6 - 0.08);
+      ctx.stroke();
+    }
+  } else {
+    ring(0.66, 3); ring(0.62, 1.5);
+    // 六芒星と頂点の小円
+    for (let t = 0; t < 2; t++) {
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * Math.PI * 2 + (t ? Math.PI : 0) - Math.PI / 2;
+        const x = cx + Math.cos(a) * 0.62 * R, y = cx + Math.sin(a) * 0.62 * R;
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2 - Math.PI / 2;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * 0.62 * R, cx + Math.sin(a) * 0.62 * R, 0.045 * R, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ring(0.30, 2); ring(0.22, 4);
+    // 中心の目印
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 0.05 * R, cx + Math.sin(a) * 0.05 * R);
+      ctx.lineTo(cx + Math.cos(a) * 0.18 * R, cx + Math.sin(a) * 0.18 * R);
+      ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 8;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const circleGeo = new THREE.PlaneGeometry(2.6, 2.6);
+function circleMesh(kind, y) {
+  const m = new THREE.Mesh(
+    circleGeo,
+    new THREE.MeshBasicMaterial({
+      map: circleLayer(kind), color: MAGIC, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = y;
+  // 半透明の床面は splat より先に描かないと被写体越しに透ける
+  m.renderOrder = -1;
+  scene.add(m);
+  return m;
+}
+const circleOuter = circleMesh("outer", 0.006);
+const circleMid = circleMesh("mid", 0.007);
+const circleInner = circleMesh("inner", 0.008);
+const circleMats = [circleOuter.material, circleMid.material, circleInner.material];
+
+// 空中に浮かぶ文字帯の輪。2本を別速度・別傾きで回す
+function runeBandTexture() {
+  const c = document.createElement("canvas");
+  c.width = 2048; c.height = 128;
+  const g = c.getContext("2d");
+  g.strokeStyle = "#fff"; g.lineCap = "round"; g.lineWidth = 3;
+  const rand = seeded(29);
+  for (let i = 0; i < 64; i++) {
+    g.save();
+    g.translate(16 + i * 32, 64);
+    const strokes = 2 + Math.floor(rand() * 3);
+    for (let s = 0; s < strokes; s++) {
+      g.beginPath();
+      g.moveTo((rand() - 0.5) * 18, (rand() - 0.5) * 60);
+      g.lineTo((rand() - 0.5) * 18, (rand() - 0.5) * 60);
+      g.stroke();
+    }
+    g.restore();
+  }
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, 6); g.lineTo(2048, 6); g.stroke();
+  g.beginPath(); g.moveTo(0, 122); g.lineTo(2048, 122); g.stroke();
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const runeTex = runeBandTexture();
+function runeBand(radius, height, y, tilt) {
+  const pivot = new THREE.Group();
+  pivot.position.y = y;
+  pivot.rotation.x = tilt;
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, height, 96, 1, true),
+    new THREE.MeshBasicMaterial({ map: runeTex, color: MAGIC, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+  );
+  m.renderOrder = 1;
+  pivot.add(m);
+  scene.add(pivot);
+  // Object3D.pivot（回転支点の Vector3）と衝突するので別名にする
+  m.bandPivot = pivot;
+  return m;
+}
+const bandLow = runeBand(1.12, 0.14, 0.32, 0);
+const bandHigh = runeBand(0.78, 0.09, 1.25, 0.42);
+
+// 召喚開始時に広がる波紋
+const waveTex = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(128, 128, 96, 128, 128, 128);
+  grad.addColorStop(0, "rgba(255,255,255,0)");
+  grad.addColorStop(0.7, "rgba(255,255,255,1)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const wave = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({ map: waveTex, color: MAGIC_HOT, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })
+);
+wave.rotation.x = -Math.PI / 2;
+wave.position.y = 0.01;
+wave.renderOrder = -1;
+scene.add(wave);
+
+// ===== 光の柱 =====
+const beamTex = (() => {
+  const c = document.createElement("canvas");
+  c.width = 8; c.height = 256;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 256, 0, 0);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.45)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 8, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const beam = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.62, 0.8, 2.6, 48, 1, true),
+  new THREE.MeshBasicMaterial({ map: beamTex, color: MAGIC, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+);
+beam.position.y = 1.3;
+// 柱は被写体より先に描き、被写体に覆わせる（プロキシで隠すと輪郭が四角く出る）
+beam.renderOrder = -3;
+beam.visible = false;
+scene.add(beam);
+
+// ===== 粒子の共通実装 =====
+// WebGPU の Points は 1px でしか描けないので、カメラを向いた板を InstancedMesh で描く。
+// 色に明るさを乗せ、加算合成で黒＝不可視として扱う
+const dotTex = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.3, "rgba(255,255,255,0.6)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+class SoftParticles {
+  constructor(count, map, renderOrder = 2) {
+    this.count = count;
+    this.mesh = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+      count
+    );
+    this.mesh.renderOrder = renderOrder;
+    this.mesh.frustumCulled = false;
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._s = new THREE.Vector3();
+    this._p = new THREE.Vector3();
+    this._c = new THREE.Color();
+    for (let i = 0; i < count; i++) this.mesh.setColorAt(i, this._c.setScalar(0));
+    scene.add(this.mesh);
+  }
+  begin() { camera.getWorldQuaternion(this._q); }
+  set(i, x, y, z, size, r, g, b) {
+    this._p.set(x, y, z);
+    this._s.setScalar(size);
+    this._m.compose(this._p, this._q, this._s);
+    this.mesh.setMatrixAt(i, this._m);
+    this.mesh.setColorAt(i, this._c.setRGB(r, g, b));
+  }
+  end() { this.mesh.instanceMatrix.needsUpdate = true; this.mesh.instanceColor.needsUpdate = true; }
+  clear() {
+    for (let i = 0; i < this.count; i++) this.mesh.setColorAt(i, this._c.setScalar(0));
+    this.mesh.instanceColor.needsUpdate = true;
+  }
+}
+
+// ===== 立ちのぼる粒子 =====
+const P_COUNT = 150;
+const pSeed = [];
+for (let i = 0; i < P_COUNT; i++) {
+  const a = Math.random() * Math.PI * 2;
+  const r = 0.25 + Math.random() * 0.6;
+  pSeed.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, t: Math.random(), size: 0.04 + Math.random() * 0.07 });
+}
+const rising = new SoftParticles(P_COUNT, dotTex);
+function updateRising(now, amount, color) {
+  if (amount <= 0) { rising.clear(); return; }
+  rising.begin();
+  for (let i = 0; i < P_COUNT; i++) {
+    const sd = pSeed[i];
+    const life = (now * 0.00035 + sd.t) % 1;
+    const swirl = now * 0.0008 + sd.t * 6.28;
+    const r = 1 - life * 0.5;
+    const x = (sd.x * Math.cos(swirl) - sd.z * Math.sin(swirl)) * r;
+    const z = (sd.x * Math.sin(swirl) + sd.z * Math.cos(swirl)) * r;
+    const b = amount * Math.sin(life * Math.PI) * 0.8;
+    rising.set(i, x, life * (OBJ_H + 1.2), z, sd.size, color.r * b, color.g * b, color.b * b);
+  }
+  rising.end();
+}
+
+// ===== 稲妻 =====
+// カメラを向いた帯で描く。芯（細く明るい）と、にじみ（太く淡い）の2層。
+// 形は中点変位で作り、1本ごとに短い寿命で明滅させる
+const boltTex = (() => {
+  const c = document.createElement("canvas");
+  c.width = 64; c.height = 4;
+  const g = c.getContext("2d");
+  const grad = g.createLinearGradient(0, 0, 64, 0);
+  grad.addColorStop(0, "rgba(255,255,255,0)");
+  grad.addColorStop(0.5, "rgba(255,255,255,1)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 4);
+  return new THREE.CanvasTexture(c);
+})();
+const BOLT_SEG = 32;
+class BoltRibbon {
+  constructor(width, color, intensity) {
+    this.width = width;
+    const n = (BOLT_SEG + 1) * 2;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+    const uv = new Float32Array(n * 2);
+    for (let i = 0; i <= BOLT_SEG; i++) { uv[i * 4] = 0; uv[i * 4 + 1] = i / BOLT_SEG; uv[i * 4 + 2] = 1; uv[i * 4 + 3] = i / BOLT_SEG; }
+    geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    const idx = [];
+    for (let i = 0; i < BOLT_SEG; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    geo.setIndex(idx);
+    this.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      map: boltTex, color: new THREE.Color(color).multiplyScalar(intensity), transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    }));
+    this.mesh.renderOrder = 2;
+    this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+  }
+  // pts: Vector3 の配列（BOLT_SEG+1 個）。camPos に向けて帯を張る
+  build(pts, camPos, taper) {
+    const pos = this.mesh.geometry.attributes.position.array;
+    const dir = new THREE.Vector3(), view = new THREE.Vector3(), side = new THREE.Vector3();
+    for (let i = 0; i <= BOLT_SEG; i++) {
+      const p = pts[i];
+      const q = pts[Math.min(i + 1, BOLT_SEG)], o = pts[Math.max(i - 1, 0)];
+      dir.subVectors(q, o).normalize();
+      view.subVectors(camPos, p).normalize();
+      side.crossVectors(dir, view).normalize();
+      const w = this.width * (taper ? 1 - (i / BOLT_SEG) * 0.6 : 1);
+      pos[i * 6] = p.x - side.x * w; pos[i * 6 + 1] = p.y - side.y * w; pos[i * 6 + 2] = p.z - side.z * w;
+      pos[i * 6 + 3] = p.x + side.x * w; pos[i * 6 + 4] = p.y + side.y * w; pos[i * 6 + 5] = p.z + side.z * w;
+    }
+    this.mesh.geometry.attributes.position.needsUpdate = true;
+  }
+}
+// 中点変位で始点から終点までのギザギザを作る
+function jaggedPath(from, to, amp) {
+  const pts = new Array(BOLT_SEG + 1);
+  pts[0] = from.clone(); pts[BOLT_SEG] = to.clone();
+  const subdivide = (a, b, offset) => {
+    if (b - a < 2) return;
+    const m = (a + b) >> 1;
+    const mid = pts[a].clone().add(pts[b]).multiplyScalar(0.5);
+    mid.x += (Math.random() - 0.5) * offset;
+    mid.y += (Math.random() - 0.5) * offset * 0.6;
+    mid.z += (Math.random() - 0.5) * offset;
+    pts[m] = mid;
+    subdivide(a, m, offset * 0.55);
+    subdivide(m, b, offset * 0.55);
+  };
+  subdivide(0, BOLT_SEG, amp);
+  return pts;
+}
+const BOLT_N = 6;
+const bolts = [];
+for (let i = 0; i < BOLT_N; i++) {
+  const impact = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+  impact.scale.setScalar(0.22);
+  impact.renderOrder = 3;
+  scene.add(impact);
+  bolts.push({
+    core: new BoltRibbon(0.008, 0xffffff, 3.5),
+    halo: new BoltRibbon(0.035, MAGIC_HOT, 1.2),
+    branch: new BoltRibbon(0.005, MAGIC_HOT, 2.2),
+    impact,
+    t0: -1, life: 0, hasBranch: false
+  });
+}
+const camPos = new THREE.Vector3();
+function spawnBolt(b, topY, now) {
+  const a = Math.random() * Math.PI * 2;
+  const r0 = 0.9 + Math.random() * 0.35;
+  const from = new THREE.Vector3(Math.cos(a) * r0, 0.02, Math.sin(a) * r0);
+  const a2 = a + (Math.random() - 0.5) * 1.4;
+  const r1 = Math.random() * 0.32;
+  const to = new THREE.Vector3(Math.cos(a2) * r1, Math.max(0.06, topY - Math.random() * 0.15), Math.sin(a2) * r1);
+  const pts = jaggedPath(from, to, 0.45);
+  b.pts = pts;
+  b.t0 = now;
+  b.life = 90 + Math.random() * 110;
+  b.hasBranch = Math.random() < 0.6;
+  if (b.hasBranch) {
+    const k = 8 + Math.floor(Math.random() * 14);
+    const end = pts[k].clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.5, 0.15 + Math.random() * 0.35, (Math.random() - 0.5) * 0.5));
+    b.branchPts = jaggedPath(pts[k], end, 0.2);
+  }
+  b.impact.position.copy(to);
+}
+function updateBolts(topY, strength, now) {
+  camera.getWorldPosition(camPos);
+  for (const b of bolts) {
+    const age = now - b.t0;
+    if (b.t0 < 0 || age > b.life) {
+      // 寿命が尽きたら少し間を置いて次を出す。強さが高いほど間隔が短い
+      if (Math.random() < 0.08 * strength) spawnBolt(b, topY, now);
+      else { b.core.mesh.material.opacity = b.halo.mesh.material.opacity = b.branch.mesh.material.opacity = b.impact.material.opacity = 0; continue; }
+    }
+    const t = (now - b.t0) / b.life;
+    // 立ち上がりは速く、消えるときは揺らぎながら減衰
+    const env = (t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85) * (0.75 + Math.random() * 0.25) * strength;
+    b.core.build(b.pts, camPos, false);
+    b.halo.build(b.pts, camPos, false);
+    b.core.mesh.material.opacity = env;
+    b.halo.mesh.material.opacity = env * 0.7;
+    if (b.hasBranch) { b.branch.build(b.branchPts, camPos, true); b.branch.mesh.material.opacity = env * 0.8; }
+    else b.branch.mesh.material.opacity = 0;
+    b.impact.material.opacity = env;
+    b.impact.scale.setScalar(0.16 + env * 0.18);
+  }
+}
+
+// ===== 点火の閃光 =====
+const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTex, color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+flash.position.y = 0.4;
+flash.scale.setScalar(1.7);
+flash.renderOrder = 3;
+scene.add(flash);
+
+// ===== 光の柱のまわりを漂う粒子 =====
+// 大きさ違いの3群。ぼかしの強いテクスチャーで「ぼわっ」とした光にする
+const softTex = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,0.9)");
+  grad.addColorStop(0.25, "rgba(255,255,255,0.45)");
+  grad.addColorStop(0.6, "rgba(255,255,255,0.1)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const DUST_N = 150;
+const dustSeed = [];
+for (let i = 0; i < DUST_N; i++) {
+  // 大きさは小・中・大の3段。大きいものほど淡く
+  const tier = i < 100 ? 0 : i < 138 ? 1 : 2;
+  dustSeed.push({
+    a: Math.random() * Math.PI * 2, r: 0.35 + Math.random() * 0.75, y0: 0.1 + Math.random() * 1.9,
+    w: (0.15 + Math.random() * 0.35) * (Math.random() < 0.5 ? 1 : -1), rise: 0.05 + Math.random() * 0.12,
+    phase: Math.random() * Math.PI * 2, life: 0.6 + Math.random() * 0.8,
+    size: [0.06, 0.15, 0.26][tier] * (0.8 + Math.random() * 0.4), bright: [1.0, 0.45, 0.18][tier]
+  });
+}
+const dust = new SoftParticles(DUST_N, softTex);
+rising.mesh.material.map = softTex;
+rising.mesh.material.needsUpdate = true;
+function updateDust(now, amount, color) {
+  if (amount <= 0) { dust.clear(); return; }
+  const t = now * 0.001;
+  dust.begin();
+  for (let i = 0; i < DUST_N; i++) {
+    const sd = dustSeed[i];
+    const a = sd.a + t * sd.w;
+    const top = OBJ_H + 1.0;
+    const y = 0.05 + ((sd.y0 + t * sd.rise) % top);
+    // 呼吸するように明滅。上端に近づくほど薄くなる
+    const pulse = 0.55 + 0.45 * Math.sin(t * sd.life * 4 + sd.phase);
+    const fade = Math.min(1, (top - y) * 1.5) * Math.min(1, y * 4);
+    const b = amount * sd.bright * pulse * fade;
+    dust.set(i, Math.cos(a) * sd.r, y, Math.sin(a) * sd.r, sd.size, color.r * b, color.g * b, color.b * b);
+  }
+  dust.end();
+}
+
+// ===== 被写体 =====
+const EDGE = 0.05;
+const Y_BOTTOM = 0.02;
+const reveal = uniform(0);
+// 被写体の奥にある帯や柱が透けて手前に出ないよう、凸包の背面だけを深度に書く。
+// 出現途中は切断面より上をクリップして、まだ見えていない部分の帯が欠けないようにする
+const cutPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+let splat = null;
+let subjectRoot = null;
+let OBJ_H = 1; // 実際の表示高さ。演出の高さはこれに連動させる
+let current = null; // 反転のために保持する { geometry, opts }
+
+// 寸法の決め方: 高さは 0.5%〜99.5% 点の範囲、幅は中心からの距離の 99% 点で測り、
+// 高さと幅の両方の上限に収まる縮尺にして魔法陣の中央に置く
+function setSubject(geometry, opts) {
+  if (subjectRoot) {
+    scene.remove(subjectRoot);
+    // r186 の GaussianSplat に dispose はないので、geometry と material を個別に解放する
+    subjectRoot.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+  }
+  current = { geometry, opts };
+  subjectRoot = new THREE.Group();
+  splat = new GaussianSplat(geometry);
+  splat.rotation.x = (opts.rx * Math.PI) / 180;
+  const rot = new THREE.Matrix4().makeRotationFromEuler(splat.rotation);
+  const src = geometry.getAttribute("position");
+  const N = src.count;
+  const v = new THREE.Vector3();
+  const xs = new Float32Array(N), ys = new Float32Array(N), zs = new Float32Array(N);
+  let mx = 0, mz = 0;
+  for (let i = 0; i < N; i++) {
+    v.set(src.getX(i), src.getY(i), src.getZ(i)).applyMatrix4(rot);
+    xs[i] = v.x; ys[i] = v.y; zs[i] = v.z;
+    mx += v.x; mz += v.z;
+  }
+  mx /= N; mz /= N;
+  const pct = (arr, q) => arr[Math.min(arr.length - 1, Math.floor(arr.length * q))];
+  const ySorted = Float32Array.from(ys).sort();
+  const yLo = pct(ySorted, 0.005);
+  const yHi = pct(ySorted, 0.995);
+  const rSorted = new Float32Array(N);
+  for (let i = 0; i < N; i++) rSorted[i] = Math.hypot(xs[i] - mx, zs[i] - mz);
+  rSorted.sort();
+  // 99% 点を使うのは、遠くに散った粒で幅が膨らむのを避けるため
+  const widthLocal = 2 * pct(rSorted, 0.99);
+  const k = Math.min(opts.height / (yHi - yLo), opts.widthMax / widthLocal);
+  splat.scale.setScalar(k);
+  splat.position.set(-mx * k, Y_BOTTOM - yLo * k, -mz * k);
+  splat.updateMatrixWorld();
+  OBJ_H = (yHi - yLo) * k;
+  bandHigh.bandPivot.position.y = OBJ_H + 0.35;
+  subjectRoot.add(splat);
+
+  // 深度プロキシ。上下の端に散った粒を含めると凸包が大きくなり黒い縁が出るので、中ほどの粒だけを使う
+  const hullPts = [];
+  const step = Math.max(1, Math.floor(N / 4000));
+  for (let i = 0; i < N; i += step) {
+    if (ys[i] < yLo + (yHi - yLo) * 0.05 || ys[i] > yHi - (yHi - yLo) * 0.05) continue;
+    hullPts.push(new THREE.Vector3(xs[i], ys[i], zs[i]));
+  }
+  if (hullPts.length >= 4) {
+    const hullGeo = new ConvexGeometry(hullPts);
+    hullGeo.computeBoundingBox();
+    const hc = hullGeo.boundingBox.getCenter(new THREE.Vector3());
+    hullGeo.translate(-hc.x, -hc.y, -hc.z).scale(0.9, 0.9, 0.9).translate(hc.x, hc.y, hc.z);
+    const proxy = new THREE.Mesh(hullGeo, new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.BackSide }));
+    proxy.position.copy(splat.position);
+    proxy.scale.copy(splat.scale);
+    proxy.renderOrder = -2;
+    // WebGPURenderer のクリップは ClippingGroup 単位
+    const clipGroup = new THREE.ClippingGroup();
+    clipGroup.clippingPlanes = [cutPlane];
+    clipGroup.add(proxy);
+    subjectRoot.add(clipGroup);
+  }
+
+  // 出現の演出。粒ごとのワールド高さを頂点ステージで求め、切断面より上をアルファ0にする。
+  // 切断面のすぐ下は白く光らせて輪郭にする
+  const cut = float(Y_BOTTOM - EDGE * 2).add(reveal.mul(OBJ_H + EDGE * 4));
+  const splatIndex = splat._sort.orderRead.element(instanceIndex);
+  const center = splat._buffers.centerRead.element(splatIndex).xyz;
+  const pw = modelWorldMatrix.mul(vec4(center, 1));
+  const py = varying(pw.y);
+  const noise = varying(hash(splatIndex));
+  const floorMask = varying(smoothstep(Y_BOTTOM - 0.01, Y_BOTTOM + 0.005, pw.y));
+  const d = cut.sub(py).sub(noise.mul(EDGE * 1.5));
+  const mask = smoothstep(-0.004, 0.004, d).mul(floorMask);
+  const edge = float(1).sub(smoothstep(0, EDGE, d)).mul(mask);
+  const base = splat.material.colorNode;
+  const glow = vec3(MAGIC_HOT.r, MAGIC_HOT.g, MAGIC_HOT.b).mul(1.7);
+  splat.material.colorNode = vec4(mix(base.rgb, glow, edge.mul(0.6)), base.a.mul(mask));
+  splat.material.needsUpdate = true;
+
+  scene.add(subjectRoot);
+}
+
+// SuperSplat で書き出した .spz は上下が反転するので既定で 180 度回す
+const defaultOpts = { rx: 180, height: 1.1, widthMax: 1.5 };
+setSubject(await new SPZLoader().loadAsync("./models/sushi.spz"), defaultOpts);
+
+// ===== 自分の .spz を読み込む（ブラウザー内で完結。どこにも送信しない） =====
+const spzLoader = new SPZLoader();
+async function loadUserFile(file) {
+  if (!file || !/\.spz$/i.test(file.name)) return;
+  const buffer = await file.arrayBuffer();
+  let geometry;
+  try {
+    geometry = await new Promise((resolve, reject) => spzLoader.parse(buffer, resolve, reject));
+  } catch {
+    alert(document.documentElement.lang === "ja" ? "この .spz ファイルは読み込めませんでした" : "Could not read this .spz file");
+    return;
+  }
+  setSubject(geometry, defaultOpts);
+  resetAndSummon();
+}
+document.getElementById("load").addEventListener("click", () => document.getElementById("file").click());
+document.getElementById("file").addEventListener("change", (e) => loadUserFile(e.target.files[0]));
+document.getElementById("flip").addEventListener("click", () => {
+  if (!current) return;
+  setSubject(current.geometry, { ...current.opts, rx: (current.opts.rx + 180) % 360 });
+  resetAndSummon();
+});
+const dropEl = document.getElementById("drop");
+window.addEventListener("dragover", (e) => { e.preventDefault(); dropEl.classList.add("on"); });
+window.addEventListener("dragleave", (e) => { if (!e.relatedTarget) dropEl.classList.remove("on"); });
+window.addEventListener("drop", (e) => { e.preventDefault(); dropEl.classList.remove("on"); loadUserFile(e.dataTransfer.files[0]); });
+
+// ===== ポストプロセス =====
+const postProcessing = new THREE.RenderPipeline(renderer);
+const scenePass = pass(scene, camera);
+postProcessing.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.55, 0.75));
+
+// ===== 召喚の進行 =====
+// idle → summon(3.2s) → shown。shown で押すと dismiss(0.7s) してから再召喚
+const SUMMON_DUR = 3.2;
+const DISMISS_DUR = 0.7;
+let state = "idle";
+let t0 = 0;
+let pendingSummon = false;
+const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2);
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+function resetAndSummon() {
+  state = "idle";
+  pendingSummon = false;
+  reveal.value = 0;
+  beam.visible = false;
+  summon();
+}
+function summon() {
+  if (state === "summon") return;
+  if (state === "shown") { state = "dismiss"; t0 = performance.now(); pendingSummon = true; return; }
+  state = "summon";
+  t0 = performance.now();
+  beam.visible = true;
+}
+const shake = new THREE.Vector3();
+const tmpColor = new THREE.Color();
+document.getElementById("summon").addEventListener("click", summon);
+
+let idleOpacity = 0;
+function update(now) {
+  const el = (now - t0) / 1000;
+  const spin = now * 0.00025;
+  circleOuter.rotation.z = spin;
+  circleInner.rotation.z = -spin * 1.6;
+  let circleOp = idleOpacity;
+  let beamOp = 0;
+  let light = 0;
+  let particleOp = 0;
+  let heat = 0; // 0=紫、1=白青。演出のピークで色を変える
+  let boltStrength = 0;
+  let dustAmount = 0;
+  let flashOp = 0;
+  if (state === "summon") {
+    const a = clamp01(el / 0.5);
+    const b = clamp01((el - 0.35) / 2.1);
+    const c = clamp01((el - 2.45) / 0.75);
+    reveal.value = easeInOut(b);
+    circleOp = 0.35 + a * 0.75 - c * 0.5;
+    beamOp = (b < 1 ? 0.13 * Math.min(1, el / 0.4) : 0.13) * (1 - c) * (0.85 + Math.sin(el * 37) * 0.15);
+    light = 10 * Math.min(1, el / 0.4) * (1 - c * 0.7);
+    particleOp = b < 1 ? Math.min(1, el / 0.3) : 1 - c;
+    const w = clamp01(el / 0.9);
+    wave.scale.setScalar(0.4 + w * 4.2);
+    wave.material.opacity = (1 - w) * 0.9;
+    idleOpacity = 0.6;
+    // 魔法陣は縮んだ状態から勢いよく広がる
+    const grow = 0.55 + 0.45 * (1 - (1 - a) ** 3) + Math.sin(a * Math.PI) * 0.06;
+    for (const m of [circleOuter, circleMid, circleInner]) m.scale.setScalar(grow);
+    flashOp = el < 0.42 ? 0 : Math.max(0, 1 - (el - 0.42) / 0.3) * 0.7;
+    heat = b < 1 ? Math.min(1, el / 0.6) : 1 - c;
+    boltStrength = b < 1 ? Math.min(1, el / 0.5) : Math.max(0, 1 - c * 2);
+    dustAmount = b < 1 ? Math.min(1, el / 0.5) : 1 - c * 0.7;
+    if (el > 0.42 && el < 0.75) shake.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.025 * (1 - (el - 0.42) / 0.33));
+    else shake.set(0, 0, 0);
+    if (el >= SUMMON_DUR) { state = "shown"; beam.visible = false; reveal.value = 1; }
+  } else if (state === "dismiss") {
+    const a = clamp01(el / DISMISS_DUR);
+    reveal.value = 1 - easeInOut(a);
+    circleOp = 0.6 + a * 0.4;
+    light = 4 + a * 4;
+    particleOp = a;
+    heat = a;
+    boltStrength = a * 0.7;
+    dustAmount = a;
+    if (a >= 1) { state = "idle"; reveal.value = 0; if (pendingSummon) { pendingSummon = false; summon(); } }
+  } else if (state === "shown") {
+    light = 2.5 + Math.sin(now * 0.002) * 0.6;
+    circleOp = idleOpacity + Math.sin(now * 0.0016) * 0.06;
+    dustAmount = 0.3;
+  }
+  tmpColor.lerpColors(MAGIC, MAGIC_HOT, heat * 0.55);
+  for (const m of circleMats) { m.opacity = circleOp; m.color.copy(tmpColor); }
+  bandLow.material.opacity = circleOp * 0.8;
+  bandHigh.material.opacity = circleOp * 0.6;
+  bandLow.material.color.copy(tmpColor);
+  bandHigh.material.color.copy(tmpColor);
+  bandLow.rotation.y = -now * 0.0006;
+  bandHigh.rotation.y = now * 0.0011;
+  beam.material.color.lerpColors(MAGIC, MAGIC_HOT, heat * 0.3);
+  beam.rotation.y = now * 0.0004;
+  flash.material.opacity = flashOp;
+  glowLight.color.copy(tmpColor);
+  if (boltStrength > 0) updateBolts(Y_BOTTOM + reveal.value * OBJ_H, boltStrength, now);
+  else for (const b of bolts) { b.t0 = -1; b.core.mesh.material.opacity = b.halo.mesh.material.opacity = b.branch.mesh.material.opacity = b.impact.material.opacity = 0; }
+  updateDust(now, dustAmount, tmpColor);
+  cutPlane.constant = Y_BOTTOM - EDGE * 2 + reveal.value * (OBJ_H + EDGE * 4);
+  beam.material.opacity = beamOp;
+  glowLight.intensity = light;
+  updateRising(now, particleOp, tmpColor);
+}
+
+renderer.setAnimationLoop((now) => {
+  update(now);
+  controls.update();
+  camera.position.add(shake);
+  postProcessing.render();
+});
+window.addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+if (params.has("auto")) setTimeout(summon, 600);
+
+</script>
+</body>
+</html>
