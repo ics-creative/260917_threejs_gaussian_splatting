@@ -1,8 +1,8 @@
-# 260828_threejs_gaussian_splatting
+# 260925_threejs_gaussian_splatting
 
 Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a sushi captured with a smartphone is summoned from a magic circle.
 
-- Live demo: https://ics-creative.github.io/260828_threejs_gaussian_splatting/
+- Live demo: https://ics-creative.github.io/260925_threejs_gaussian_splatting/
 - Press **Summon** to play the effect again. **Load .spz** (or drag and drop) shows your own `.spz` file, and **Flip** turns it upside down when the export orientation differs. Files are parsed in the browser and never uploaded.
 - Query parameters: `?lang=ja` switches the button label to Japanese, `?auto` starts the summon on load.
 
