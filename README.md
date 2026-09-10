@@ -8,7 +8,7 @@ Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a su
 
 ## How it works
 
-- `GaussianSplat` and `SPZLoader` from Three.js r186 render the splats. Three.js is loaded from a CDN through an import map, so there is no build step.
+- `GaussianSplat` and `SPZLoader` from Three.js r186 render the splats. Three.js (`three@0.186.0`) is bundled under `docs/vendor/` and resolved through an import map, so there is no build step and no CDN dependency.
 - The reveal effect compares each splat's world height with a moving cut plane in the material's `colorNode`, so the subject rises out of the circle with a glowing edge.
 - Everything else (magic circle, rune bands, lightning, particles, bloom) is ordinary Three.js drawn with the WebGPU renderer. Browsers without WebGPU fall back to WebGL2.
 

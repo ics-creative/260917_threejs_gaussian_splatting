@@ -5,30 +5,30 @@
 <title>Summon a 3D Gaussian Splat</title>
 <link rel="icon" href="data:,">
 <style>
-  body { margin: 0; overflow: hidden; background: #06070c; font-family: system-ui, sans-serif; }
+  body { margin: 0; overflow: hidden; background: #06070c; font-family: sans-serif; }
   #ui { position: fixed; left: 0; right: 0; bottom: 28px; display: flex; justify-content: center; pointer-events: none; }
   #summon {
-    pointer-events: auto; cursor: pointer; border: 1px solid rgba(160, 140, 255, 0.6); border-radius: 999px;
+    pointer-events: auto; cursor: pointer; border: 1px solid rgb(160 140 255 / 0.6); border-radius: 999px;
     padding: 12px 44px; font-size: 17px; letter-spacing: 0.28em; text-transform: uppercase; color: #e8e4ff;
-    background: rgba(40, 30, 90, 0.55); backdrop-filter: blur(6px); transition: transform 0.1s, background 0.2s;
+    background: rgb(40 30 90 / 0.55); backdrop-filter: blur(6px); transition: transform 0.1s, background 0.2s;
   }
-  #summon:hover { background: rgba(80, 60, 160, 0.7); }
+  #summon:hover { background: rgb(80 60 160 / 0.7); }
   #summon:active { transform: scale(0.96); }
   #ui { gap: 14px; align-items: center; }
   .sub {
-    pointer-events: auto; cursor: pointer; border: 1px solid rgba(160, 140, 255, 0.35); border-radius: 999px;
-    padding: 8px 18px; font-size: 12px; letter-spacing: 0.12em; color: #b8b0e8; background: rgba(30, 24, 60, 0.5);
+    pointer-events: auto; cursor: pointer; border: 1px solid rgb(160 140 255 / 0.35); border-radius: 999px;
+    padding: 8px 18px; font-size: 12px; letter-spacing: 0.12em; color: #b8b0e8; background: rgb(30 24 60 / 0.5);
   }
-  .sub:hover { background: rgba(60, 48, 120, 0.6); }
+  .sub:hover { background: rgb(60 48 120 / 0.6); }
   #drop {
     position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none;
-    font-size: 22px; letter-spacing: 0.2em; color: #e8e4ff; background: rgba(40, 30, 90, 0.45);
-    border: 2px dashed rgba(180, 160, 255, 0.7); box-sizing: border-box;
+    font-size: 22px; letter-spacing: 0.2em; color: #e8e4ff; background: rgb(40 30 90 / 0.45);
+    border: 2px dashed rgb(180 160 255 / 0.7); box-sizing: border-box;
   }
   #drop.on { display: flex; }
 </style>
 <script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"}}
+{"imports":{"three":"./vendor/three/build/three.webgpu.js","three/webgpu":"./vendor/three/build/three.webgpu.js","three/tsl":"./vendor/three/build/three.tsl.js","three/addons/":"./vendor/three/examples/jsm/"}}
 </script>
 </head>
 <body>
@@ -291,9 +291,9 @@ const waveTex = (() => {
   c.width = c.height = 256;
   const g = c.getContext("2d");
   const grad = g.createRadialGradient(128, 128, 96, 128, 128, 128);
-  grad.addColorStop(0, "rgba(255,255,255,0)");
-  grad.addColorStop(0.7, "rgba(255,255,255,1)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
+  grad.addColorStop(0, "rgb(255 255 255 / 0)");
+  grad.addColorStop(0.7, "rgb(255 255 255 / 1)");
+  grad.addColorStop(1, "rgb(255 255 255 / 0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 256, 256);
   return new THREE.CanvasTexture(c);
@@ -313,9 +313,9 @@ const beamTex = (() => {
   c.width = 8; c.height = 256;
   const g = c.getContext("2d");
   const grad = g.createLinearGradient(0, 256, 0, 0);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.35, "rgba(255,255,255,0.45)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
+  grad.addColorStop(0, "rgb(255 255 255 / 1)");
+  grad.addColorStop(0.35, "rgb(255 255 255 / 0.45)");
+  grad.addColorStop(1, "rgb(255 255 255 / 0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 8, 256);
   return new THREE.CanvasTexture(c);
@@ -338,9 +338,9 @@ const dotTex = (() => {
   c.width = c.height = 64;
   const g = c.getContext("2d");
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.3, "rgba(255,255,255,0.6)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
+  grad.addColorStop(0, "rgb(255 255 255 / 1)");
+  grad.addColorStop(0.3, "rgb(255 255 255 / 0.6)");
+  grad.addColorStop(1, "rgb(255 255 255 / 0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
@@ -411,9 +411,9 @@ const boltTex = (() => {
   c.width = 64; c.height = 4;
   const g = c.getContext("2d");
   const grad = g.createLinearGradient(0, 0, 64, 0);
-  grad.addColorStop(0, "rgba(255,255,255,0)");
-  grad.addColorStop(0.5, "rgba(255,255,255,1)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
+  grad.addColorStop(0, "rgb(255 255 255 / 0)");
+  grad.addColorStop(0.5, "rgb(255 255 255 / 1)");
+  grad.addColorStop(1, "rgb(255 255 255 / 0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 4);
   return new THREE.CanvasTexture(c);
@@ -546,10 +546,10 @@ const softTex = (() => {
   c.width = c.height = 128;
   const g = c.getContext("2d");
   const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grad.addColorStop(0, "rgba(255,255,255,0.9)");
-  grad.addColorStop(0.25, "rgba(255,255,255,0.45)");
-  grad.addColorStop(0.6, "rgba(255,255,255,0.1)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
+  grad.addColorStop(0, "rgb(255 255 255 / 0.9)");
+  grad.addColorStop(0.25, "rgb(255 255 255 / 0.45)");
+  grad.addColorStop(0.6, "rgb(255 255 255 / 0.1)");
+  grad.addColorStop(1, "rgb(255 255 255 / 0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
   return new THREE.CanvasTexture(c);
