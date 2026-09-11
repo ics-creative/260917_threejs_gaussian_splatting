@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Summon a 3D Gaussian Splat</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="ui">
+      <button id="load" class="sub">Load .spz</button>
+      <button id="summon">Summon</button>
+      <button id="flip" class="sub">Flip</button>
+    </div>
+    <input id="file" type="file" accept=".spz" hidden />
+    <div id="drop">Drop a .spz file to summon it</div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

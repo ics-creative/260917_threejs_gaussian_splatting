@@ -1,0 +1,61 @@
+export type Lang = "en" | "ja";
+
+interface UiHandlers {
+  summon(): void;
+  load(file: File): void;
+  flip(): void;
+}
+
+// 英語版の記事と共通にするため既定は英語。?lang=ja で日本語表記にする
+export function detectLang(params: URLSearchParams): Lang {
+  return params.get("lang") === "ja" ? "ja" : "en";
+}
+
+function element<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`#${id} is missing`);
+  return el as T;
+}
+
+export function setupUi(lang: Lang, handlers: UiHandlers): void {
+  document.documentElement.lang = lang;
+  const summonButton = element<HTMLButtonElement>("summon");
+  if (lang === "ja") summonButton.textContent = "召喚";
+  summonButton.addEventListener("click", handlers.summon);
+  element<HTMLButtonElement>("flip").addEventListener("click", handlers.flip);
+
+  // 自分の .spz を読み込む。ブラウザー内で完結し、どこにも送信しない
+  const fileInput = element<HTMLInputElement>("file");
+  element<HTMLButtonElement>("load").addEventListener("click", () =>
+    fileInput.click(),
+  );
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) handlers.load(file);
+    // 同じファイルを続けて選んでも change が発火するようにする
+    fileInput.value = "";
+  });
+
+  const dropOverlay = element<HTMLDivElement>("drop");
+  window.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    dropOverlay.classList.add("on");
+  });
+  window.addEventListener("dragleave", (event) => {
+    if (!event.relatedTarget) dropOverlay.classList.remove("on");
+  });
+  window.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropOverlay.classList.remove("on");
+    const file = event.dataTransfer?.files[0];
+    if (file) handlers.load(file);
+  });
+}
+
+export function showLoadError(lang: Lang): void {
+  alert(
+    lang === "ja"
+      ? "この .spz ファイルは読み込めませんでした"
+      : "Could not read this .spz file",
+  );
+}
