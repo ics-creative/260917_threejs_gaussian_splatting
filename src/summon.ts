@@ -37,7 +37,8 @@ export class Summoner {
   private readonly fx: SummonEffects;
   private startedAt = 0;
   private pendingSummon = false;
-  private idleOpacity = 0;
+  // 最初の召喚前も魔法陣が見えるよう 0 にはしない。召喚後は 0.6 に上がる
+  private idleOpacity = 0.4;
   private readonly tint = new THREE.Color();
   private readonly beamTint = new THREE.Color();
 
@@ -155,6 +156,10 @@ export class Summoner {
       light = 2.5 + Math.sin(now * 0.002) * 0.6;
       circleOpacity = this.idleOpacity + Math.sin(now * 0.0016) * 0.06;
       dustAmount = 0.3;
+    } else {
+      // 召喚前。魔法陣をゆっくり明滅させて待つ
+      light = 1.2;
+      circleOpacity = this.idleOpacity + Math.sin(now * 0.0016) * 0.04;
     }
 
     this.tint.lerpColors(baseColor, hotColor, heat * 0.55);
