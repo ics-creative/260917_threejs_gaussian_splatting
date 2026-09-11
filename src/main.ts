@@ -9,7 +9,7 @@ import { DustParticles, RisingParticles } from "./effects/particles.ts";
 import { MagicCircle } from "./magicCircle.ts";
 import { Subject, type SubjectOptions } from "./subject.ts";
 import { Summoner } from "./summon.ts";
-import { detectLang, setupUi, showLoadError } from "./ui.ts";
+import { setupUi, showLoadError } from "./ui.ts";
 
 const MAGIC = new THREE.Color(0x8f7cff);
 const MAGIC_HOT = new THREE.Color(0xcfe6ff);
@@ -19,7 +19,6 @@ const DEFAULT_OPTIONS: SubjectOptions = { rx: 180, height: 1.1, widthMax: 1.5 };
 const BAND_CLEARANCE = 0.35;
 
 const params = new URLSearchParams(location.search);
-const lang = detectLang(params);
 
 // MSAA は数十万粒の近接描画で大きく fps が落ちる（ブレンド帯域が 4 倍になる）ため無効
 const renderer = new THREE.WebGPURenderer({ antialias: false });
@@ -103,14 +102,14 @@ async function loadUserFile(file: File): Promise<void> {
       loader.parse(buffer, resolve, reject),
     );
   } catch {
-    showLoadError(lang);
+    showLoadError();
     return;
   }
   setSubject(geometry, DEFAULT_OPTIONS);
   summoner.restart();
 }
 
-setupUi(lang, {
+setupUi({
   summon: () => summoner.summon(),
   load: (file) => void loadUserFile(file),
   flip: () => {

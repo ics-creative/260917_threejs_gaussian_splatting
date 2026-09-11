@@ -1,14 +1,7 @@
-export type Lang = "en" | "ja";
-
 interface UiHandlers {
   summon(): void;
   load(file: File): void;
   flip(): void;
-}
-
-// 英語版の記事と共通にするため既定は英語。?lang=ja で日本語表記にする
-export function detectLang(params: URLSearchParams): Lang {
-  return params.get("lang") === "ja" ? "ja" : "en";
 }
 
 function element<T extends HTMLElement>(id: string): T {
@@ -17,10 +10,8 @@ function element<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-export function setupUi(lang: Lang, handlers: UiHandlers): void {
-  document.documentElement.lang = lang;
+export function setupUi(handlers: UiHandlers): void {
   const summonButton = element<HTMLButtonElement>("summon");
-  if (lang === "ja") summonButton.textContent = "召喚";
   summonButton.addEventListener("click", handlers.summon);
   element<HTMLButtonElement>("flip").addEventListener("click", handlers.flip);
 
@@ -52,10 +43,6 @@ export function setupUi(lang: Lang, handlers: UiHandlers): void {
   });
 }
 
-export function showLoadError(lang: Lang): void {
-  alert(
-    lang === "ja"
-      ? "この .spz ファイルは読み込めませんでした"
-      : "Could not read this .spz file",
-  );
+export function showLoadError(): void {
+  alert("Could not read this .spz file");
 }

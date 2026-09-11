@@ -4,7 +4,7 @@ Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a su
 
 - Live demo: https://ics-creative.github.io/260925_threejs_gaussian_splatting/
 - Press **Summon** to play the effect again. **Load .spz** (or drag and drop) shows your own `.spz` file, and **Flip** turns it upside down when the export orientation differs. Files are parsed in the browser and never uploaded.
-- Query parameters: `?lang=ja` switches the button label to Japanese, `?auto` starts the summon on load.
+- Add `?auto` to the URL to start the summon on load.
 
 ## How it works
 
