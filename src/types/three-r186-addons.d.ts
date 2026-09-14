@@ -6,11 +6,14 @@ declare module "three/addons/objects/GaussianSplat.js" {
     BufferGeometry,
     Mesh,
     NodeMaterial,
+    Sphere,
     StorageBufferNode,
   } from "three/webgpu";
 
   export class GaussianSplat extends Mesh<BufferGeometry, NodeMaterial> {
     constructor(geometry: BufferGeometry, options?: { autoSort?: boolean });
+    boundingSphere: Sphere | null;
+    computeBoundingSphere(): void;
     // 出現演出で粒の並び順と中心座標を読むための内部プロパティ
     _sort: { orderRead: StorageBufferNode<"uint"> };
     _buffers: { centerRead: StorageBufferNode<"vec4"> };

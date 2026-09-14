@@ -1,28 +1,35 @@
-# 260925_threejs_gaussian_splatting
+# 260917_threejs_gaussian_splatting
 
-Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a plate of spaghetti captured with a smartphone is summoned from a magic circle.
+Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a plate of spaghetti captured with a smartphone is summoned from an RPG-style save point.
 
-- Live demo: https://ics-creative.github.io/260925_threejs_gaussian_splatting/
+- Live demo: https://ics-creative.github.io/260917_threejs_gaussian_splatting/
 - Press **Summon** to play the effect again. **Load .spz** (or drag and drop) shows your own `.spz` file, and **Flip** turns it upside down when the export orientation differs. Files are parsed in the browser and never uploaded.
 - Add `?auto` to the URL to start the summon on load.
+- `basic.html` is the minimal viewer from the article: load a `.spz`, add it to the scene, fit the camera. Nothing else.
 
 ## How it works
 
+The save point (magic circle, light pillar, swirl and particles) is the code from the ICS MEDIA article [エフェクト作成入門講座 Three.js編 RPGのセーブポイント風の魔法陣](https://ics.media/entry/11401/) ([ics-creative/160304_threejs_save_point](https://github.com/ics-creative/160304_threejs_save_point)), used as-is. This demo adds the splat subject on top of it.
+
 - `GaussianSplat` and `SPZLoader` from Three.js r186 render the splats with the WebGPU renderer. Browsers without WebGPU fall back to WebGL2.
-- The reveal effect compares each splat's world height with a moving cut plane in the material's `colorNode`, so the subject rises out of the circle with a glowing edge (`src/subject.ts`).
-- Everything else is ordinary Three.js: the magic circle and rune bands are canvas textures (`src/magicCircle.ts`), the lightning, particles and light pillar live in `src/effects/`, and the summon sequence is a small state machine (`src/summon.ts`).
+- `src/objects/Subject.ts` fits the loaded splats into the circle and adds the reveal effect: the material's `colorNode` compares each splat's world height with a moving cut plane, so the subject rises out of the light pillar with a glowing edge.
+- `src/objects/SavePoint.ts` gains a `summon()` timeline (GSAP) that charges the effects, fires lightning (`src/effects/Lightning.ts`), raises the subject and sinks the pillar.
+- Bloom is selective: the save point effects declare `mrtNode = mrt({ bloomIntensity: 1 })`, the splats only bloom along the cut edge, so the captured colours stay as they were photographed.
 
 ## Source layout
 
 ```
 src/
-  main.ts            renderer, scene, camera and the frame loop
-  subject.ts         fits the loaded splats into the circle and adds the reveal effect
-  magicCircle.ts     three-layer magic circle and floating rune bands
-  summon.ts          idle / summon / shown / dismiss sequence
-  effects/           lightning, particles, light pillar, shock wave, flash
-  ui.ts              buttons, file loading, drag and drop, language switch
-  textures.ts        shared canvas textures
+  Main.ts            renderer, scene, camera, post-processing and the frame loop
+  basic.ts           minimal viewer for basic.html (no effects)
+  objects/
+    SavePoint.ts     save point effects and the summon sequence
+    Subject.ts       fits the loaded splats into the circle and adds the reveal effect
+    Floor.ts         tiled floor
+  effects/           magic circle, light pillar, swirl (from the save point demo) and Lightning.ts
+  particles/         floating and wave particles (from the save point demo)
+  img/               textures for the effects (from the save point demo)
+  ui.ts              buttons, file loading, drag and drop, loading indicator
   types/             type declarations for r186 features not yet in @types/three
 ```
 
