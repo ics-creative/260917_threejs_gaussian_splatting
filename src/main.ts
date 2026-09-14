@@ -9,7 +9,7 @@ import { DustParticles, RisingParticles } from "./effects/particles.ts";
 import { MagicCircle } from "./magicCircle.ts";
 import { Subject, type SubjectOptions } from "./subject.ts";
 import { Summoner } from "./summon.ts";
-import { setupUi, showLoadError } from "./ui.ts";
+import { setLoading, setupUi, showLoadError } from "./ui.ts";
 
 const MAGIC = new THREE.Color(0x8f7cff);
 const MAGIC_HOT = new THREE.Color(0xcfe6ff);
@@ -95,18 +95,19 @@ setSubject(await loader.loadAsync("./models/spaghetti.spz"), DEFAULT_OPTIONS);
 
 async function loadUserFile(file: File): Promise<void> {
   if (!/\.spz$/i.test(file.name)) return;
-  const buffer = await file.arrayBuffer();
-  let geometry: THREE.BufferGeometry;
+  setLoading(true);
   try {
-    geometry = await new Promise((resolve, reject) =>
-      loader.parse(buffer, resolve, reject),
+    const buffer = await file.arrayBuffer();
+    const geometry = await new Promise<THREE.BufferGeometry>(
+      (resolve, reject) => loader.parse(buffer, resolve, reject),
     );
+    setSubject(geometry, DEFAULT_OPTIONS);
+    summoner.restart();
   } catch {
     showLoadError();
-    return;
+  } finally {
+    setLoading(false);
   }
-  setSubject(geometry, DEFAULT_OPTIONS);
-  summoner.restart();
 }
 
 setupUi({
@@ -125,11 +126,17 @@ const pipeline = new THREE.RenderPipeline(renderer);
 const scenePass = pass(scene, camera);
 pipeline.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.55, 0.92));
 
+let firstFrame = true;
 renderer.setAnimationLoop((now) => {
   summoner.update(now);
   controls.update();
   camera.position.add(summoner.shake);
   pipeline.render();
+  // 初回描画はシェーダーのコンパイルを含んで時間がかかるので、描き終えてからローディング表示を消す
+  if (firstFrame) {
+    firstFrame = false;
+    setLoading(false);
+  }
 });
 
 window.addEventListener("resize", () => {

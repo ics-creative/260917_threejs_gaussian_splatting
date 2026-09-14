@@ -46,3 +46,7 @@ export function setupUi(handlers: UiHandlers): void {
 export function showLoadError(): void {
   alert("Could not read this .spz file");
 }
+
+export function setLoading(on: boolean): void {
+  element<HTMLDivElement>("loading").classList.toggle("off", !on);
+}
