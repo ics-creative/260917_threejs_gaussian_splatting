@@ -13,8 +13,8 @@ import { setupUi, showLoadError } from "./ui.ts";
 
 const MAGIC = new THREE.Color(0x8f7cff);
 const MAGIC_HOT = new THREE.Color(0xcfe6ff);
-// SuperSplat で書き出した .spz は上下が反転するので既定で 180 度回す
-const DEFAULT_OPTIONS: SubjectOptions = { rx: 180, height: 1.1, widthMax: 1.5 };
+// 書き出し元によって上下が反転していることがある。反転していたら Flip ボタンで直す
+const DEFAULT_OPTIONS: SubjectOptions = { rx: 0, height: 1.1, widthMax: 1.5 };
 // 上の文字帯を被写体の頭上に置くときの余白
 const BAND_CLEARANCE = 0.35;
 
@@ -24,8 +24,8 @@ const params = new URLSearchParams(location.search);
 const renderer = new THREE.WebGPURenderer({ antialias: false });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+// 3DGS は撮影時の色をそのまま持っているので、トーンマッピングは掛けずに SuperSplat と同じ発色にする
+renderer.toneMapping = THREE.NoToneMapping;
 document.body.prepend(renderer.domElement);
 await renderer.init();
 
@@ -91,7 +91,7 @@ function setSubject(
 }
 
 const loader = new SPZLoader();
-setSubject(await loader.loadAsync("./models/sushi.spz"), DEFAULT_OPTIONS);
+setSubject(await loader.loadAsync("./models/spaghetti.spz"), DEFAULT_OPTIONS);
 
 async function loadUserFile(file: File): Promise<void> {
   if (!/\.spz$/i.test(file.name)) return;
@@ -120,10 +120,10 @@ setupUi({
   },
 });
 
-// ポストプロセス。ブルームで魔法陣と稲妻を光らせる
+// ポストプロセス。ブルームで魔法陣と稲妻を光らせる。しきい値は白い皿が光らない程度に高くする
 const pipeline = new THREE.RenderPipeline(renderer);
 const scenePass = pass(scene, camera);
-pipeline.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.55, 0.75));
+pipeline.outputNode = scenePass.add(bloom(scenePass, 0.7, 0.55, 0.92));
 
 renderer.setAnimationLoop((now) => {
   summoner.update(now);

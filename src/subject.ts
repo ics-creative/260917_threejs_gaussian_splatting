@@ -68,11 +68,11 @@ export class Subject {
     return Y_BOTTOM + this.reveal.value * this.objectHeight;
   }
 
-  // 出現率 0〜1。切断面より下の粒だけが見える
+  // 出現率 0〜1。切断面より下の粒だけが見える。1 のとき切断面は上端より縁の厚み（ノイズ込み）以上に高く、白い縁が残らない
   setReveal(value: number): void {
     this.reveal.value = value;
     this.cutPlane.constant =
-      Y_BOTTOM - EDGE * 2 + value * (this.objectHeight + EDGE * 4);
+      Y_BOTTOM - EDGE * 2 + value * (this.objectHeight + EDGE * 6);
   }
 
   // 寸法の決め方: 高さは 0.5%〜99.5% 点の範囲、幅は中心からの距離の 99% 点で測り、
@@ -162,7 +162,7 @@ export class Subject {
     // 出現の演出。粒ごとのワールド高さを頂点ステージで求め、切断面より上をアルファ 0 にする。
     // 切断面のすぐ下は白く光らせて輪郭にする
     const cut = float(Y_BOTTOM - EDGE * 2).add(
-      this.reveal.mul(this.objectHeight + EDGE * 4),
+      this.reveal.mul(this.objectHeight + EDGE * 6),
     );
     const splatIndex = splat._sort.orderRead.element(instanceIndex);
     const center = splat._buffers.centerRead.element(splatIndex).xyz;
@@ -187,6 +187,9 @@ export class Subject {
       mix(base.rgb, glow, edge.mul(0.6)),
       base.a.mul(mask),
     );
+    // 深度プロキシは帯や柱を隠すためのもので、被写体自身の粒まで隠してはいけない。
+    // 皿の内側のように凸包の底より低い面は深度判定で消えるので、粒は深度判定を受けない
+    splat.material.depthTest = false;
     splat.material.needsUpdate = true;
 
     this.scene.add(root);
