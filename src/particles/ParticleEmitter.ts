@@ -4,6 +4,8 @@ import WaveParticle from "./WaveParticle";
 
 /** 通常粒子と発動粒子をまとめて管理します。 */
 export default class ParticleEmitter extends THREE.Object3D {
+  /** 通常粒子の光量の倍率です。0で見えなくなります。 */
+  brightness = 1;
   /** 常に上昇する丸と閃光です。 */
   private readonly _particles = Array.from(
     { length: 80 },
@@ -31,6 +33,9 @@ export default class ParticleEmitter extends THREE.Object3D {
   update(energy: number, sparkle: number) {
     for (const particle of this._particles) {
       particle.update(energy, sparkle);
+      particle.material.color.multiplyScalar(this.brightness);
+      // 光量0でも描画するとブルーム対象の値が奥に乗るので、描画自体を止める
+      particle.visible = this.brightness > 0;
     }
   }
 }

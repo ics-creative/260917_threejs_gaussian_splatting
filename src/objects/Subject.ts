@@ -180,9 +180,12 @@ export default class Subject extends THREE.Object3D {
     );
     const depth = cut.sub(worldY).sub(noise.mul(EDGE * 1.5));
     const mask = smoothstep(-0.01, 0.01, depth).mul(floorMask);
+    // 出現が終わったら縁の光は消す。高さは99.5%点で測るので、それより上の粒が切断面の近くに残って光り続けるのを防ぐ
+    const edgeFade = float(1).sub(smoothstep(0.97, 1, this.reveal));
     const edge = float(1)
       .sub(smoothstep(0, EDGE, depth))
-      .mul(mask);
+      .mul(mask)
+      .mul(edgeFade);
     // GaussianSplatのcolorNodeは色と不透明度を持つvec4
     const base = splat.material.colorNode as THREE.Node<"vec4"> | null;
     if (!base) throw new Error("GaussianSplat has no colorNode");
@@ -195,12 +198,17 @@ export default class Subject extends THREE.Object3D {
       mix(base.rgb, glow, edge.mul(0.6)),
       base.a.mul(mask),
     );
-    // 撮影した色はそのまま見せたいので、ブルームは切断面の縁だけにかける
-    splat.material.mrtNode = mrt({ bloomIntensity: edge });
+    // 撮影した色はそのまま見せたいので、ブルームは切断面の縁だけにかける。
+    // 縁以外の粒は負の値を書いて、奥のエフェクトが半透明の粒越しに残したブルーム対象の値を打ち消す（Main側でclampして0になる）
+    splat.material.mrtNode = mrt({
+      bloomIntensity: mix(float(-4), float(1), edge),
+    });
     // 深度プロキシは奥のエフェクトを隠すためのもので、被写体自身の粒まで隠してはいけない。
     // 皿の内側のように凸包の底より低い面は深度判定で消えるので、粒は深度判定を受けない
     splat.material.depthTest = false;
     splat.material.needsUpdate = true;
+    // 魔法陣（renderOrder 1）より後、稲妻（2）より前に描く。皿の奥の魔法陣が皿に加算されて光らないようにする
+    splat.renderOrder = 1.5;
 
     this.add(root);
     this._root = root;

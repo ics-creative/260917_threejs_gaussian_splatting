@@ -140,9 +140,8 @@ async function init() {
     }
   });
 
-  if (new URLSearchParams(location.search).has("auto")) {
-    setTimeout(() => savePoint.summon(), 1500);
-  }
+  // セーブポイントの出現が終わったら自動で召喚する
+  setTimeout(() => savePoint.summon(), 1500);
 }
 
 init();

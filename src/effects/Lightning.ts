@@ -203,11 +203,12 @@ export default class Lightning extends THREE.Object3D {
     bolt.impact.position.copy(to);
   }
 
+  /** 稲妻を消します。不透明度0でも描画は続き、ブルーム対象の値が奥の被写体に乗ってしまうので、描画自体を止める */
   private _hide(bolt: Bolt) {
-    bolt.core.material.opacity = 0;
-    bolt.halo.material.opacity = 0;
-    bolt.branch.material.opacity = 0;
-    bolt.impact.material.opacity = 0;
+    bolt.core.visible = false;
+    bolt.halo.visible = false;
+    bolt.branch.visible = false;
+    bolt.impact.visible = false;
   }
 
   /** 稲妻を更新します。topYは着弾する高さ、strengthが高いほど次の稲妻までの間隔が短くなります。 */
@@ -236,13 +237,15 @@ export default class Lightning extends THREE.Object3D {
         strength;
       bolt.core.build(bolt.points, this._cameraPosition, false);
       bolt.halo.build(bolt.points, this._cameraPosition, false);
+      bolt.core.visible = true;
+      bolt.halo.visible = true;
+      bolt.impact.visible = true;
       bolt.core.material.opacity = envelope;
       bolt.halo.material.opacity = envelope * 0.7;
+      bolt.branch.visible = bolt.hasBranch;
       if (bolt.hasBranch) {
         bolt.branch.build(bolt.branchPoints, this._cameraPosition, true);
         bolt.branch.material.opacity = envelope * 0.8;
-      } else {
-        bolt.branch.material.opacity = 0;
       }
       bolt.impact.material.opacity = envelope;
       bolt.impact.scale.setScalar(0.45 + envelope * 0.5);

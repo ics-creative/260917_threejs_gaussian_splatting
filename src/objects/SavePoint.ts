@@ -12,8 +12,8 @@ import type Subject from "./Subject";
 export default class SavePoint extends THREE.Object3D {
   /** 各エフェクトで共有するアニメーション値です。 */
   private readonly _motion = { energy: 0, sparkle: 0.2 };
-  /** 召喚の進み具合です。revealは被写体の出現率、lightningは稲妻の強さです。 */
-  private readonly _summon = { reveal: 0, lightning: 0 };
+  /** 召喚の進み具合です。revealは被写体の出現率、lightningは稲妻の強さ、calmは被写体を見せる間に周囲の光を弱める度合いです。 */
+  private readonly _summon = { reveal: 0, lightning: 0, calm: 0 };
   /** 召喚される被写体です。 */
   private readonly _subject: Subject;
   /** 地面の明るさを更新するマテリアルです。 */
@@ -34,7 +34,7 @@ export default class SavePoint extends THREE.Object3D {
   private readonly _particleEmitter = new ParticleEmitter();
   /** 召喚中に被写体へ走る稲妻です。 */
   private readonly _lightning = new Lightning(0xa0e0ff);
-  /** 周期的な明滅のタイムラインです。召喚中は止めます。 */
+  /** 召喚前の周期的な明滅のタイムラインです。召喚を始めたら止めます。 */
   private _pulse: gsap.core.Timeline | null = null;
   /** 再生中の召喚タイムラインです。 */
   private _summonTimeline: gsap.core.Timeline | null = null;
@@ -90,8 +90,11 @@ export default class SavePoint extends THREE.Object3D {
   /** 各エフェクトを更新し、現在の発光の強さを返します。 */
   update(delta: number, camera: THREE.Camera) {
     const { energy, sparkle } = this._motion;
+    const { calm } = this._summon;
     this._magicCircle.update(energy);
     this._pillar.update(delta, energy);
+    // 被写体の奥にある光が強いと、そのブルームが被写体の上にまでにじむので弱める
+    this._spreadLight.brightness = 0.8 * (1 - calm * 0.7);
     this._spreadLight.update(delta, energy);
     this._swirl.update(delta, energy);
     this._particleEmitter.update(energy, sparkle);
@@ -102,7 +105,7 @@ export default class SavePoint extends THREE.Object3D {
       this._summon.lightning,
     );
     this._groundMaterial.color.setRGB(energy * 0.4, 0.4 + energy * 0.4, 1);
-    this._groundMaterial.opacity = 0.65 + energy * 0.15;
+    this._groundMaterial.opacity = (0.65 + energy * 0.15) * (1 - calm * 0.4);
     this._light.color.setRGB(energy, 0.6 + energy * 0.4, 1);
     this._light.intensity = 150 + energy * 200;
     return energy;
@@ -154,11 +157,10 @@ export default class SavePoint extends THREE.Object3D {
     this._busy = true;
     // 余韻の途中で押されたら、余韻を打ち切って次の召喚へ進む
     this._summonTimeline?.kill();
-    this._pulse?.pause();
-    const timeline = gsap.timeline({
-      // 余韻で発光が0に戻るので、周期的な明滅を最初から再開すると途切れない
-      onComplete: () => this._pulse?.restart(true),
-    });
+    // 召喚後は被写体を見せる時間なので、周期的な明滅は再開しない
+    this._pulse?.kill();
+    this._pulse = null;
+    const timeline = gsap.timeline();
 
     // 表示中の被写体を沈め、光の柱を戻す
     if (this._summon.reveal > 0) {
@@ -169,7 +171,9 @@ export default class SavePoint extends THREE.Object3D {
           { y: 0, duration: 0.8, ease: "power4.out" },
           "<",
         )
-        .set(this._pillar, { brightness: 1 });
+        .set(this._pillar, { brightness: 1 })
+        .set(this._particleEmitter, { brightness: 1 })
+        .to(this._summon, { calm: 0, duration: 0.6 }, "<");
     }
 
     // 位置は「光を溜め始める時刻」からの相対で指定する
@@ -206,6 +210,13 @@ export default class SavePoint extends THREE.Object3D {
         "charge+=1.4",
       )
       .to(this._summon, { lightning: 0, duration: 0.6 }, "charge+=3.3")
+      // 被写体を見せる時間は浮遊する粒子も消して、加算合成の光を減らす
+      .to(
+        this._particleEmitter,
+        { brightness: 0, duration: 1.5 },
+        "charge+=2.8",
+      )
+      .to(this._summon, { calm: 1, duration: 1.5 }, "charge+=2.8")
       .call(
         () => {
           this._busy = false;
@@ -224,6 +235,8 @@ export default class SavePoint extends THREE.Object3D {
     this._summon.reveal = 0;
     this._pillar.position.y = 0;
     this._pillar.brightness = 1;
+    this._particleEmitter.brightness = 1;
+    this._summon.calm = 0;
     this.summon();
   }
 }

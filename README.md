@@ -3,8 +3,7 @@
 Demo for the ICS MEDIA article on 3D Gaussian Splatting with Three.js r186: a plate of spaghetti captured with a smartphone is summoned from an RPG-style save point.
 
 - Live demo: https://ics-creative.github.io/260917_threejs_gaussian_splatting/
-- Press **Summon** to play the effect again. **Load .spz** (or drag and drop) shows your own `.spz` file, and **Flip** turns it upside down when the export orientation differs. Files are parsed in the browser and never uploaded.
-- Add `?auto` to the URL to start the summon on load.
+- The summon plays once the model has loaded. Press **Summon** to play it again. **Load .spz** (or drag and drop) shows your own `.spz` file, and **Flip** turns it upside down when the export orientation differs. Files are parsed in the browser and never uploaded.
 - `basic.html` is the minimal viewer from the article: load a `.spz`, add it to the scene, fit the camera. Nothing else.
 
 ## How it works
