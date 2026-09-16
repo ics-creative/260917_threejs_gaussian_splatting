@@ -30,7 +30,7 @@ src/
   particles/         floating and wave particles (from the save point demo)
   img/               textures for the effects (from the save point demo)
   ui.ts              buttons, file loading, drag and drop, loading indicator
-  types/             type declarations for r186 features not yet in @types/three
+  types/             type declaration for GaussianSplat internals used by the reveal effect
 ```
 
 ## Development
